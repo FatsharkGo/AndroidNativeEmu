@@ -2,15 +2,51 @@ import logging
 import posixpath
 import sys
 
-from unicorn import UcError, UC_HOOK_MEM_UNMAPPED, UC_HOOK_CODE
+from unicorn import UcError, UC_HOOK_MEM_UNMAPPED, UC_HOOK_CODE, UC_HOOK_MEM_WRITE, UC_HOOK_MEM_READ
+from unicorn.unicorn_const import UC_PROT_EXEC
 from unicorn.arm_const import *
 
 from androidemu.emulator import Emulator
 from androidemu.java.java_class_def import JavaClassDef
 from androidemu.java.java_method_def import java_method_def
+import androidemu.utils.debug_utils
+from androidemu.utils.chain_log import ChainLogger
 
-import debug_utils
+g_cfd = ChainLogger(sys.stdout, "./ins-jni.txt")
 
+def hook_code(mu, address, size, user_data):
+    try:
+        emu = user_data
+        if (not emu.memory.check_addr(address, UC_PROT_EXEC)):
+            logger.error("addr 0x%08X out of range"%(address,))
+            sys.exit(-1)
+        #
+        #androidemu.utils.debug_utils.dump_registers(mu, sys.stdout)
+        androidemu.utils.debug_utils.dump_code(emu, address, size, g_cfd)
+    except Exception as e:
+        logger.exception("exception in hook_code")
+        sys.exit(-1)
+    #
+#
+
+def hook_mem_read(uc, access, address, size, value, user_data):
+    pc = uc.reg_read(UC_ARM_REG_PC)
+    
+    if (address == 0xCBC80640):
+        logger.debug("read mutex")
+        data = uc.mem_read(address, size)
+        v = int.from_bytes(data, byteorder='little', signed=False)
+        logger.debug(">>> Memory READ at 0x%08X, data size = %u,  data value = 0x%08X, pc: 0x%08X," % (address, size, v, pc))
+    #
+#
+
+def hook_mem_write(uc, access, address, size, value, user_data):
+    pc = uc.reg_read(UC_ARM_REG_PC)
+    if (address == 0xCBC80640):
+        logger.debug("write mutex")
+        logger.debug(">>> Memory WRITE at 0x%08X, data size = %u, data value = 0x%08X, pc: 0x%08X" % (address, size, value, pc))
+    #
+#
 
 # Create java class.
 class MainActivity(metaclass=JavaClassDef, jvm_name='local/myapp/testnativeapp/MainActivity'):
@@ -41,17 +77,15 @@ emulator = Emulator(
     vfs_root=posixpath.join(posixpath.dirname(__file__), "vfs")
 )
 
-# emulator.mu.hook_add(UC_HOOK_CODE, debug_utils.hook_code)
-# emulator.mu.hook_add(UC_HOOK_MEM_UNMAPPED, debug_utils.hook_unmapped)
+emulator.mu.hook_add(UC_HOOK_CODE, hook_code, emulator)
+emulator.mu.hook_add(UC_HOOK_MEM_UNMAPPED, androidemu.utils.debug_utils.hook_unmapped)
+emulator.mu.hook_add(UC_HOOK_MEM_WRITE, hook_mem_write)
+emulator.mu.hook_add(UC_HOOK_MEM_READ, hook_mem_read)
 
 # Register Java class.
 emulator.java_classloader.add_class(MainActivity)
 
 # Load all libraries.
-emulator.load_library("example_binaries/32/libdl.so")
-emulator.load_library("example_binaries/32/libc.so")
-emulator.load_library("example_binaries/32/libstdc++.so")
-emulator.load_library("example_binaries/32/libm.so")
 lib_module = emulator.load_library("example_binaries/32/libnative-lib_jni.so")
 
 # Show loaded modules.

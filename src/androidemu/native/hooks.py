@@ -1,22 +1,23 @@
 import logging
 import os
 
-from androidemu.hooker import Hooker
-from androidemu.internal.modules import Modules
+from ..hooker import Hooker
+from ..internal.modules import Modules
 
-from androidemu.java.helpers.native_method import native_method, native_read_args
-from androidemu.memory.memory_manager import MemoryManager
-from androidemu.utils import memory_helpers
+from ..java.helpers.native_method import native_method, native_read_args
+from ..memory.memory_manager import MemoryManager
+from ..utils import memory_helpers
 
 logger = logging.getLogger(__name__)
 
 
 class NativeHooks:
 
-    def __init__(self, emu, memory: MemoryManager, modules: Modules, hooker: Hooker):
+    def __init__(self, emu, memory: MemoryManager, modules: Modules, hooker: Hooker, vfs_root: str):
         self._emu = emu
         self._memory = memory
         self._modules = modules
+        self.__vfs_root = vfs_root
         self.atexit = []
 
         modules.add_symbol_hook('__system_property_get', hooker.write_function(self.system_property_get) + 1)
@@ -25,9 +26,11 @@ class NativeHooks:
         modules.add_symbol_hook('dlclose', hooker.write_function(self.dlclose) + 1)
         modules.add_symbol_hook('dladdr', hooker.write_function(self.dladdr) + 1)
         modules.add_symbol_hook('dlsym', hooker.write_function(self.dlsym) + 1)
+        modules.add_symbol_hook('dl_unwind_find_exidx', hooker.write_function(self.dl_unwind_find_exidx) + 1)
         modules.add_symbol_hook('vfprintf', hooker.write_function(self.vfprintf) + 1)
-        modules.add_symbol_hook('pthread_create', hooker.write_function(self.nop('pthread_create')) + 1)
-        modules.add_symbol_hook('pthread_join', hooker.write_function(self.nop('pthread_join')) + 1)
+        modules.add_symbol_hook('pthread_create', hooker.write_function(self.pthread_create) + 1)
+        modules.add_symbol_hook('pthread_join', hooker.write_function(self.pthread_join) + 1)
+        modules.add_symbol_hook('abort', hooker.write_function(self.abort) + 1)
         modules.add_symbol_hook('fprintf', hooker.write_function(self.nop('fprintf')) + 1)
         modules.add_symbol_hook('dlerror', hooker.write_function(self.nop('dlerror')) + 1)
 
@@ -162,6 +165,28 @@ class NativeHooks:
         result_string = result_string.format(args)
         logger.debug("Called vfprintf(%r)" % result_string)
 
+
+    @native_method
+    def abort(self, uc):
+        raise RuntimeError("abort called!!!")
+        sys.exit(-1)
+    #
+
+    @native_method
+    def dl_unwind_find_exidx(self, uc, pc, pcount_ptr):
+        return 0
+    #
+
+    @native_method
+    def pthread_create(self, uc, pthread_t, attr, start_routine, arg):
+        logging.warning("pthread_create called start_routine [0x%08X]"%(start_routine,))
+        return 0
+    #
+
+    @native_method
+    def pthread_join(self, uc, pthread_t, retval):
+        return 0
+		
 
     def nop(self, name):
         @native_method

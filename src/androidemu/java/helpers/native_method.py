@@ -3,10 +3,10 @@ import inspect
 from unicorn import Uc
 from unicorn.arm_const import *
 
-from androidemu.hooker import STACK_OFFSET
-from androidemu.java.java_class_def import JavaClassDef
-from androidemu.java.jni_const import JNI_ERR
-from androidemu.java.jni_ref import jobject, jstring, jobjectArray, jbyteArray, jclass
+from ...hooker import STACK_OFFSET
+from ..java_class_def import JavaClassDef
+from ..jni_const import JNI_ERR
+from ..jni_ref import jobject, jstring, jobjectArray, jbyteArray, jclass
 
 
 def native_write_args(emu, *argv):
@@ -112,8 +112,18 @@ def native_method(func):
             result = func(argv[0], mu, *native_args)
 
         if result is not None:
-            native_write_arg_register(emu, UC_ARM_REG_R0, result)
-        else:
-            mu.reg_write(UC_ARM_REG_R0, JNI_ERR)
+            if(isinstance(result, tuple)):
+                #tuple作为特殊返回8字节数据约定
+                rlow = result[0]
+                rhigh = result[1]
+                native_write_arg_register(emu, UC_ARM_REG_R0, rlow)
+                native_write_arg_register(emu, UC_ARM_REG_R1, rhigh)
+            else:
+                #FIXME handle python基本类型str int float,处理返回值逻辑略为混乱，
+                #返回值的问题统一在这里处理掉
+                native_write_arg_register(emu, UC_ARM_REG_R0, result)
+            #
+        #
+    #
 
     return native_method_wrapper
