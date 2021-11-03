@@ -3,7 +3,7 @@ import os
 from random import randint
 
 import hexdump
-from unicorn import Uc, UC_ARCH_ARM, UC_MODE_ARM
+from unicorn import Uc, UC_ARCH_ARM, UC_MODE_ARM, UC_ARCH_ARM64, UC_PROT_READ, UC_PROT_WRITE
 from unicorn.arm_const import UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_R0, UC_ARM_REG_C13_C0_3
 
 from androidemu.cpu.interrupt_handler import InterruptHandler
@@ -30,22 +30,31 @@ class Emulator:
     :type mu Uc
     :type modules Modules
     """
-    def __init__(self, vfs_root: str = None, vfp_inst_set: bool = False):
+    def __init__(self, vfs_root: str = None, aarch64: bool = True, vfp_inst_set: bool = False):
         # Unicorn.
-        self.mu = Uc(UC_ARCH_ARM, UC_MODE_ARM)
+        self.__vfs_root = vfs_root
+        self._a64 = aarch64
+        if self._a64:
+            self.mu = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
+        else:
+            self.mu = Uc(UC_ARCH_ARM, UC_MODE_ARM)
 
         if vfp_inst_set:
             self._enable_vfp()
+            
+        logger.info("Map [0x{:08X}, 0x{:08X}): 0x{:08X} | RW".format(0, 0x00001000, 0x00001000))
+        self.mu.mem_map(0x0, 0x00001000, UC_PROT_READ | UC_PROT_WRITE)
 
         # Android
         self.system_properties = {"libc.debug.malloc.options": ""}
 
         # Stack.
+        logger.info("Map [0x{:08X}, 0x{:08X}): 0x{:08X} | RW".format(STACK_ADDR, STACK_ADDR+STACK_SIZE, STACK_SIZE))
         self.mu.mem_map(STACK_ADDR, STACK_SIZE)
         self.mu.reg_write(UC_ARM_REG_SP, STACK_ADDR + STACK_SIZE)
 
         # Executable data.
-        self.modules = Modules(self)
+        self.modules = Modules(self, self.__vfs_root)
         self.memory_manager = MemoryManager(self.mu)
 
         # CPU
@@ -61,6 +70,7 @@ class Emulator:
             self.vfs = None
 
         # Hooker
+        logger.info("Map [0x{:08X}, 0x{:08X}): 0x{:08X} | RW".format(HOOK_MEMORY_BASE, HOOK_MEMORY_BASE+HOOK_MEMORY_BASE, HOOK_MEMORY_BASE))
         self.mu.mem_map(HOOK_MEMORY_BASE, HOOK_MEMORY_SIZE)
         self.hooker = Hooker(self, HOOK_MEMORY_BASE, HOOK_MEMORY_SIZE)
 
@@ -101,6 +111,7 @@ class Emulator:
         code_bytes = bytes.fromhex(code)
 
         try:
+            logger.info("Map [0x{:08X}, 0x{:08X}): 0x{:08X} | RW".format(address, address+mem_size, mem_size))
             self.mu.mem_map(address, mem_size)
             self.mu.mem_write(address, code_bytes)
             self.mu.reg_write(UC_ARM_REG_SP, address + mem_size)
@@ -137,13 +148,8 @@ class Emulator:
         self.mu.mem_write(thread_info_1 + 0xC, int(thread_info_2).to_bytes(4, byteorder='little'))
         self.mu.reg_write(UC_ARM_REG_C13_C0_3, thread_info_1)
 
-    def load_library(self, filename, do_init=True):
-        libmod = self.modules.load_module(filename)
-        if do_init:
-            logger.debug("Calling init for: %s " % filename)
-            for fun_ptr in libmod.init_array:
-                logger.debug("Calling Init function: %x " % fun_ptr)
-                self.call_native(fun_ptr, 0, 0, 0)
+    def load_library(self, filename, do_init=True, emu64=True):
+        libmod = self.modules.load_module(filename, do_init, emu64)
         return libmod
 
     def call_symbol(self, module, symbol_name, *argv):

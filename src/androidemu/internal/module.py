@@ -1,3 +1,5 @@
+import logging
+logger = logging.getLogger(__name__)
 class Module:
 
     """
@@ -25,7 +27,13 @@ class Module:
 
     def is_symbol_addr(self, addr):
         if addr in self.symbol_lookup:
-            return self.symbol_lookup[addr](0)
+            return self.symbol_lookup[addr][0]
+        elif addr+1 in self.symbol_lookup:
+            return self.symbol_lookup[addr+1][0]
         else:
             return None
 
+    def call_init(self, emu):
+        for func_ptr in self.init_array:
+            logger.info("Calling init_array {} function: 0x{:08X}".format(self.filename, func_ptr))
+            emu.call_native(func_ptr)

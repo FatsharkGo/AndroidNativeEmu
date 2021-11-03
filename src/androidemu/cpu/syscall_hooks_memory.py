@@ -9,10 +9,16 @@ class SyscallHooksMemory:
         self._uc = uc
         self._memory = memory
         self._syscall_handler = syscall_handler
+        self._syscall_handler.set_handler(0x2d, "brk", 1, self._handle_brk)
         self._syscall_handler.set_handler(0x5B, "munmap", 2, self._handle_munmap)
         self._syscall_handler.set_handler(0x7D, "mprotect", 3, self._handle_mprotect)
         self._syscall_handler.set_handler(0xC0, "mmap2", 6, self._handle_mmap2)
         self._syscall_handler.set_handler(0xDC, "madvise", 3, self._handle_madvise)
+
+    def _handle_brk(self, uc, brk):
+        #TODO: set errno
+        #TODO: implement 
+        return -1
 
     def _handle_munmap(self, uc, addr, len_in):
         self._memory.mapping_unmap(addr, len_in)

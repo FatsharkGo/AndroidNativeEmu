@@ -206,7 +206,9 @@ ipython_config.py
 #   However, in case of collaboration, if having platform-specific dependencies or dependencies
 #   having no cross-platform support, pipenv may install dependencies that don't work, or not
 #   install all needed dependencies.
-#Pipfile.lock
+#### It's not the time migrate to pipenv.  @FatsharkGo
+Pipfile
+Pipfile.lock
 
 # celery beat schedule file
 celerybeat-schedule
@@ -280,6 +282,23 @@ $RECYCLE.BIN/
 *.lnk
 
 # End of https://www.gitignore.io/api/venv,macos,python,windows,pycharm+all
+
+# Created by https://www.gitignore.io/api/visualstudiocode
+# Edit at https://www.gitignore.io/?templates=visualstudiocode
+
+### VisualStudioCode ###
+.vscode/*      # Maybe .vscode/**/* instead - see comments
+.vscode/settings.json
+.vscode/tasks.json
+.vscode/launch.json
+.vscode/extensions.json
+.vscode/*.code-workspace
+
+### VisualStudioCode Patch ###
+# Ignore all local history of files
+**/.history
+
+# End of https://www.gitignore.io/api/visualstudiocode
 
 !/examples/**/*.so
 !/tests/**/*.so

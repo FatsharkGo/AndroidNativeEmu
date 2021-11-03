@@ -1,10 +1,12 @@
+import logging
+
 from unicorn import Uc
 
 from androidemu.memory import *
 from androidemu.memory.allocator_heap import HeapAllocator
 from androidemu.memory.allocator_incremental import IncrementalAllocator
 
-
+logger = logging.getLogger(__name__)
 class MemoryManager:
 
     def __init__(self, uc: Uc):
@@ -38,6 +40,7 @@ class MemoryManager:
         """
         (addr, size_aligned) = self._mappings.reserve(size)
 
+        logger.info("Map [0x{:08X}, 0x{:08X}): 0x{:08X} | ?".format(addr, addr+size_aligned, size_aligned))
         self._uc.mem_map(addr, size_aligned, prot)
 
         return addr
