@@ -1,7 +1,9 @@
+from .jvm_id_conter import *
+from .java_class_def import JavaClassDef
 class JavaMethodDef:
 
     def __init__(self, func_name, func, name, signature, native, args_list=None, modifier=None, ignore=None):
-        self.jvm_id = None  # Assigned by JavaClassDef.
+        self.jvm_id = next_method_id()
         self.func_name = func_name
         self.func = func
         self.name = name
@@ -15,13 +17,24 @@ class JavaMethodDef:
 
 def java_method_def(name, signature, native=False, args_list=None, modifier=None, ignore=False):
     def java_method_def_real(func):
-        def native_wrapper(self, emulator, *argv):
+        def native_wrapper(*args, **kwargs):
+            clz = args[0].__class__
+            emulator = None
+            extra_args = None
+            if (isinstance(clz, JavaClassDef)):
+			    # Instance method
+                emulator = args[1]
+                extra_args = args[2:]
+            else:
+			    # Static method
+                emulator = args[0]
+                extra_args = args[1:]
             return emulator.call_native(
                 native_wrapper.jvm_method.native_addr,
                 emulator.java_vm.jni_env.address_ptr,  # JNIEnv*
                 0xFA,    # this, TODO: Implement proper "this", a reference to the Java object inside which this native
                          # method has been declared in
-                *argv  # Extra args.
+                *extra_args  # Extra args.
             )
 
         def normal_wrapper(*args, **kwargs):

@@ -1,5 +1,5 @@
-from androidemu.memory import align
-from androidemu.memory.allocator import IncrementalAllocatorError
+from . import align
+from .allocator import IncrementalAllocatorError
 
 
 class IncrementalAllocator:
@@ -14,7 +14,7 @@ class IncrementalAllocator:
         self._pos = start
         self._end = end
 
-    def reserve(self, size) -> (int, int):
+    def reserve(self, size) -> tuple[int, int]:
         """
         Returns an Unicorn page aligned mapping.
         """

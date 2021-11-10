@@ -20,6 +20,7 @@ MAPPING_MAX = 0xF0000000
 # Alignment
 UC_MEM_ALIGN = 0x1000
 
+PAGE_SIZE = 0x1000
 
 def align(addr, size, growl):
     to = ctypes.c_uint64(UC_MEM_ALIGN).value

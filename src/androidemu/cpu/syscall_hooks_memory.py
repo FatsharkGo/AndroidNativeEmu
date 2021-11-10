@@ -1,6 +1,6 @@
 from unicorn import Uc
-from androidemu.cpu.syscall_handlers import SyscallHandlers
-from androidemu.memory.memory_manager import MemoryManager
+from ..cpu.syscall_handlers import SyscallHandlers
+from ..memory.memory_manager import MemoryManager
 
 
 class SyscallHooksMemory:
@@ -33,8 +33,8 @@ class SyscallHooksMemory:
         # MAP_PRIVATE	0x02
         # MAP_FIXED	    0x10
         # MAP_ANONYMOUS	0x20
-
-        return self._memory.mapping_map(length, prot)
+        (addr, _) = self._memory.mapping_map(length, prot)
+        return addr
 
     def _handle_madvise(self, uc, start, len_in, behavior):
         """

@@ -14,7 +14,6 @@ from .symbol_resolved import SymbolResolved
 
 
 from ..memory import align
-from ..vfs.file_system import VirtualFile
 
 from ..utils import misc_utils
 
@@ -86,7 +85,7 @@ class Modules:
         # Retrieve a base address for this module.        
         (load_base, _) = self.emu.memory_manager.reserve_module(bound_high - bound_low)        
         logger.debug('=> Base address: 0x%x' % load_base)
-        
+
         for segment in load_segments:
             prot = get_segment_protection(int(segment.flags))
             prot = prot if prot != 0 else UC_PROT_ALL

@@ -12,14 +12,14 @@ from androidemu.java.java_method_def import java_method_def
 import androidemu.utils.debug_utils
 from androidemu.utils.chain_log import ChainLogger
 
-g_cfd = ChainLogger(sys.stdout, "./ins-jni.txt")
+g_cfd = ChainLogger(sys.stdout, "./ins-jni.log")
 
 def hook_code(mu, address, size, user_data):
     try:
         emu = user_data
-        #if (not emu.memory.check_addr(address, UC_PROT_EXEC)):
-        #    logger.error("addr 0x%08X out of range"%(address,))
-        #    sys.exit(-1)
+        if (not emu.memory_manager.check_addr(address, UC_PROT_EXEC)):
+            logger.error("addr 0x%08X out of range"%(address,))
+            sys.exit(-1)
 
         #androidemu.utils.debug_utils.dump_registers(mu, sys.stdout)
         androidemu.utils.debug_utils.dump_code(emu, address, size, g_cfd)

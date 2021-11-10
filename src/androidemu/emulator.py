@@ -1,26 +1,35 @@
 import logging
 import os
+import sys
+import importlib
+import inspect
+import pkgutil
 from random import randint
 
 import hexdump
-from unicorn import Uc, UC_ARCH_ARM, UC_MODE_ARM, UC_ARCH_ARM64, UC_PROT_READ, UC_PROT_WRITE
+from unicorn import Uc, UC_ARCH_ARM, UC_MODE_ARM, UC_ARCH_ARM64
+from unicorn.unicorn_const import UC_PROT_READ, UC_PROT_WRITE, UC_PROT_EXEC
 from unicorn.arm_const import UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_R0, UC_ARM_REG_C13_C0_3
 
-from androidemu.cpu.interrupt_handler import InterruptHandler
-from androidemu.cpu.syscall_handlers import SyscallHandlers
-from androidemu.cpu.syscall_hooks import SyscallHooks
-from androidemu.cpu.syscall_hooks_memory import SyscallHooksMemory
-from androidemu.hooker import Hooker
-from androidemu.internal.modules import Modules
-from androidemu.java.helpers.native_method import native_write_args
-from androidemu.java.java_classloader import JavaClassLoader
-from androidemu.java.java_vm import JavaVM
-from androidemu.memory import STACK_ADDR, STACK_SIZE, HOOK_MEMORY_BASE, HOOK_MEMORY_SIZE
-from androidemu.memory.memory_manager import MemoryManager
-from androidemu.native.hooks import NativeHooks
-from androidemu.tracer import Tracer
-from androidemu.utils.memory_helpers import write_utf8
-from androidemu.vfs.file_system import VirtualFileSystem
+from . import config
+from .cpu.interrupt_handler import InterruptHandler
+from .cpu.syscall_handlers import SyscallHandlers
+from .cpu.syscall_hooks import SyscallHooks
+from .cpu.syscall_hooks_memory import SyscallHooksMemory
+from .hooker import Hooker
+from .internal.modules import Modules
+from .java.helpers.native_method import native_write_args
+from .java.java_classloader import JavaClassLoader
+from .java.java_vm import JavaVM
+from .memory import STACK_ADDR, STACK_SIZE, HOOK_MEMORY_BASE, HOOK_MEMORY_SIZE
+from .memory.memory_manager import MemoryManager
+from .native.hooks import NativeHooks
+from .tracer import Tracer
+from .utils.memory_helpers import write_utf8
+from .vfs.file_system import VirtualFileSystem
+from .vfs.virtual_file import VirtualFile
+from .utils import misc_utils
+from .java.java_class_def import JavaClassDef
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +39,8 @@ class Emulator:
     :type mu Uc
     :type modules Modules
     """
-    def __init__(self, vfs_root: str = None, aarch64: bool = True, vfp_inst_set: bool = False):
+    def __init__(self, vfs_root: str = None, config_path: str = "default.json", aarch64: bool = True, vfp_inst_set: bool = True):
+        config.global_config_init(config_path)
         # Unicorn.
         self.__vfs_root = vfs_root
         self._a64 = aarch64
@@ -65,7 +75,7 @@ class Emulator:
 
         # File System
         if vfs_root is not None:
-            self.vfs = VirtualFileSystem(vfs_root, self.syscall_handler)
+            self.vfs = VirtualFileSystem(vfs_root, self.syscall_handler, self.memory_manager)
         else:
             self.vfs = None
 
@@ -80,6 +90,19 @@ class Emulator:
 
         # Native
         self.native_hooks = NativeHooks(self, self.memory_manager, self.modules, self.hooker)
+
+        # JNI
+        self.__add_classes()
+
+        # Trivial files mapping
+        path = "%s/system/lib/vectors"%vfs_root
+        vf = VirtualFile("[vectors]", misc_utils.my_open(path, os.O_RDONLY), path)
+        self.memory_manager.mapping_file(0xffff0000, 0x1000, UC_PROT_EXEC | UC_PROT_READ, vf, 0)
+
+        path = "%s/system/bin/app_process32"%vfs_root
+        sz = os.path.getsize(path)
+        vf = VirtualFile("/system/bin/app_process32", misc_utils.my_open(path, os.O_RDONLY), path)
+        self.memory_manager.mapping_file(0xab006000, sz, UC_PROT_WRITE | UC_PROT_READ, vf, 0)
 
         # Tracer
         self.tracer = Tracer(self.mu, self.modules)
@@ -119,6 +142,36 @@ class Emulator:
             self.mu.emu_start(address | 1, address + len(code_bytes))
         finally:
             self.mu.mem_unmap(address, mem_size)
+
+
+    def __add_classes(self):
+        cur_file_dir = os.path.dirname(__file__)
+        entry_file_dir = os.path.dirname(os.path.realpath(sys.argv[0]))
+        #python 约定 package_name总是相对于入口脚本目录
+        #package_name = os.path.relpath(cur_file_dir, entry_file_dir).replace("/", ".")
+        package_name = os.path.basename(cur_file_dir)
+
+        full_dirname = "%s/java/classes"%(cur_file_dir, )
+
+        preload_classes = set()
+        for importer, mod_name, c in pkgutil.iter_modules([full_dirname]):
+            import_name = ".java.classes.%s"%mod_name
+            m = importlib.import_module(import_name, package_name)
+            #print(dir(m))
+            clsList = inspect.getmembers(m, inspect.isclass)
+            for _, clz in clsList:
+                if (type(clz) == JavaClassDef):
+                    preload_classes.add(clz)
+                #
+            #
+        #
+        for clz in preload_classes:
+            self.java_classloader.add_class(clz)
+        #
+
+        #also add classloader as java class
+        self.java_classloader.add_class(JavaClassLoader)
+
 
     def _setup_thread_register(self):
         """

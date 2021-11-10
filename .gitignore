@@ -303,3 +303,5 @@ $RECYCLE.BIN/
 !/examples/**/*.so
 !/tests/**/*.so
 *.idb
+**/*.log
+**/*.bak

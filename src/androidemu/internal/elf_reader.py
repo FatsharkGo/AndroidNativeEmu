@@ -27,10 +27,23 @@ class ELFReader:
         return self._binary.libraries
 
     def get_init_array(self, load_base: int) -> list[int]:
-        # As the doc mentioned, binary's getter only return the first one:
-        #  https://lief-project.github.io/doc/latest/api/python/elf.html#binary
         if self._binary.has(lief.ELF.DYNAMIC_TAGS.INIT_ARRAY):
-            return [fptr+load_base for fptr in self._binary[lief.ELF.DYNAMIC_TAGS.INIT_ARRAY].array]
+            secia = self._binary.get_section(".init_array")
+            ia_vstart = secia.virtual_address
+            ia_entries = secia.size / 4
+            init_array = self._binary[lief.ELF.DYNAMIC_TAGS.INIT_ARRAY].array
+            if ia_entries != len(init_array):
+                raise ValueError(".init_array entries mismatch")
+            if 0 in init_array:
+                reia = [en for en in self.get_rels() if en.address 
+                        in range(ia_vstart, ia_vstart+secia.size)
+                            and en.type==int(lief.ELF.RELOCATION_ARM.ABS32)]
+                for ent in reia:
+                    idx = int((ent.address - ia_vstart)/4)
+                    if init_array[idx] == 0:
+                        init_array[idx] = ent.symbol.value
+
+            return [fptr+load_base for fptr in init_array if fptr != 0]
         else:
             return []
 

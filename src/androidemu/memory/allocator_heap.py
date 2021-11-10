@@ -3,7 +3,7 @@ import logging
 
 from unicorn import Uc, UC_PROT_READ, UC_PROT_WRITE
 
-from androidemu.memory.allocator import HeapAllocatorError
+from .allocator import HeapAllocatorError
 
 logger = logging.getLogger(__name__)
 
@@ -163,3 +163,4 @@ class HeapAllocator:
     def _init_uc(self, uc: Uc):
         logger.info("Map [0x{:08X}, 0x{:08X}): 0x{:08X} | RW".format(self._start, self._end, self._end-self._start))
         uc.mem_map(self._start, self._end - self._start, UC_PROT_READ | UC_PROT_WRITE)
+

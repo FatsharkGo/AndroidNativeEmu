@@ -2,7 +2,7 @@ import logging
 
 from unicorn import *
 
-from androidemu.internal.modules import Modules
+from .internal.modules import Modules
 
 logger = logging.getLogger(__name__)
 
