@@ -3,6 +3,7 @@ import logging
 import capstone
 import os
 from unicorn.arm_const import *
+from unicorn.unicorn_const import *
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,9 @@ g_md_thumb.detail = True
 g_md_arm = capstone.Cs(capstone.CS_ARCH_ARM, capstone.CS_MODE_ARM)
 g_md_arm.detail = True
 
+g_md_a64 = capstone.Cs(capstone.CS_ARCH_ARM64, capstone.CS_MODE_ARM)
+g_md_a64.detail = True
+
 def get_module_by_addr(emu, addr):
     ms = emu.modules
     module = None
@@ -123,11 +127,14 @@ def dump_code(emu, address, size, fd):
 
     #判断是否arm，用不同的decoder
     mu = emu.mu
-    cpsr = mu.reg_read(UC_ARM_REG_CPSR)
-    if (cpsr & (1<<5)):
-        md = g_md_thumb
+    if mu._arch == UC_ARCH_ARM64:
+        md = g_md_a64
     else:
-        md = g_md_arm
+        cpsr = mu.reg_read(UC_ARM_REG_CPSR)
+        if (cpsr & (1<<5)):
+            md = g_md_thumb
+        else:
+            md = g_md_arm
     
     instruction = mu.mem_read(address, size)
     codes = md.disasm(instruction, address)

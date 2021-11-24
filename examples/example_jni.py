@@ -88,7 +88,7 @@ emulator.mu.hook_add(UC_HOOK_MEM_READ, hook_mem_read)
 emulator.java_classloader.add_class(MainActivity)
 
 # Load all libraries.
-lib_module = emulator.load_library("example_binaries/32/libnative-lib_jni.so", emu64=False)
+lib_module = emulator.load_library("example_binaries/32/libnative-lib_jni.so")
 
 # Show loaded modules.
 logger.info("Loaded modules:")

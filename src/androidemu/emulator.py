@@ -5,16 +5,21 @@ import importlib
 import inspect
 import pkgutil
 from random import randint
+import struct
 
 import hexdump
 from unicorn import Uc, UC_ARCH_ARM, UC_MODE_ARM, UC_ARCH_ARM64
 from unicorn.unicorn_const import UC_PROT_READ, UC_PROT_WRITE, UC_PROT_EXEC
 from unicorn.arm_const import UC_ARM_REG_SP, UC_ARM_REG_LR, UC_ARM_REG_R0, UC_ARM_REG_C13_C0_3
+from unicorn.arm64_const import UC_ARM64_REG_SP, UC_ARM64_REG_LR, UC_ARM64_REG_X0
+
+from keystone import Ks, KS_ARCH_ARM, KS_MODE_THUMB
 
 from . import config
 from .cpu.interrupt_handler import InterruptHandler
 from .cpu.syscall_handlers import SyscallHandlers
 from .cpu.syscall_hooks import SyscallHooks
+from .cpu.trap_handler import TrapHandler
 from .cpu.syscall_hooks_memory import SyscallHooksMemory
 from .hooker import Hooker
 from .internal.modules import Modules
@@ -43,13 +48,13 @@ class Emulator:
         config.global_config_init(config_path)
         # Unicorn.
         self.__vfs_root = vfs_root
-        self._a64 = aarch64
-        if self._a64:
+        self.a64 = aarch64
+        if self.a64:
             self.mu = Uc(UC_ARCH_ARM64, UC_MODE_ARM)
         else:
             self.mu = Uc(UC_ARCH_ARM, UC_MODE_ARM)
 
-        if vfp_inst_set:
+        if vfp_inst_set and not self.a64:
             self._enable_vfp()
             
         logger.info("Map [0x{:08X}, 0x{:08X}): 0x{:08X} | RW".format(0, 0x00001000, 0x00001000))
@@ -58,24 +63,20 @@ class Emulator:
         # Android
         self.system_properties = {"libc.debug.malloc.options": ""}
 
-        # Stack.
-        logger.info("Map [0x{:08X}, 0x{:08X}): 0x{:08X} | RW".format(STACK_ADDR, STACK_ADDR+STACK_SIZE, STACK_SIZE))
-        self.mu.mem_map(STACK_ADDR, STACK_SIZE)
-        self.mu.reg_write(UC_ARM_REG_SP, STACK_ADDR + STACK_SIZE)
-
         # Executable data.
-        self.modules = Modules(self, self.__vfs_root)
-        self.memory_manager = MemoryManager(self.mu)
+        self.modules = Modules(self, self.__vfs_root, self.a64)
+        self.memory_manager = MemoryManager(self.mu, self.a64)
 
         # CPU
-        self.interrupt_handler = InterruptHandler(self.mu)
-        self.syscall_handler = SyscallHandlers(self.interrupt_handler)
-        self.syscall_hooks = SyscallHooks(self.mu, self.syscall_handler, self.modules)
-        self.syscall_hooks_memory = SyscallHooksMemory(self.mu, self.memory_manager, self.syscall_handler)
+        self.interrupt_handler = InterruptHandler(self.mu, self.a64)
+        self.syscall_handler = SyscallHandlers(self.interrupt_handler, self.a64)
+        self.syscall_hooks = SyscallHooks(self.mu, self.syscall_handler, self.modules, self.a64)
+        self.trap_handler = TrapHandler(self.interrupt_handler, self.a64)
+        self.syscall_hooks_memory = SyscallHooksMemory(self.mu, self.memory_manager, self.syscall_handler, self.a64)
 
         # File System
         if vfs_root is not None:
-            self.vfs = VirtualFileSystem(vfs_root, self.syscall_handler, self.memory_manager)
+            self.vfs = VirtualFileSystem(vfs_root, self.syscall_handler, self.memory_manager, self.a64)
         else:
             self.vfs = None
 
@@ -99,10 +100,16 @@ class Emulator:
         vf = VirtualFile("[vectors]", misc_utils.my_open(path, os.O_RDONLY), path)
         self.memory_manager.mapping_file(0xffff0000, 0x1000, UC_PROT_EXEC | UC_PROT_READ, vf, 0)
 
-        path = "%s/system/bin/app_process32"%vfs_root
-        sz = os.path.getsize(path)
-        vf = VirtualFile("/system/bin/app_process32", misc_utils.my_open(path, os.O_RDONLY), path)
-        self.memory_manager.mapping_file(0xab006000, sz, UC_PROT_WRITE | UC_PROT_READ, vf, 0)
+        if self.a64:
+            path = "%s/system/bin/app_process64"%vfs_root
+            sz = os.path.getsize(path)
+            vf = VirtualFile("/system/bin/app_process64", misc_utils.my_open(path, os.O_RDONLY), path)
+            self.memory_manager.mapping_file(0xab006000, sz, UC_PROT_WRITE | UC_PROT_READ, vf, 0)
+        else:
+            path = "%s/system/bin/app_process32"%vfs_root
+            sz = os.path.getsize(path)
+            vf = VirtualFile("/system/bin/app_process32", misc_utils.my_open(path, os.O_RDONLY), path)
+            self.memory_manager.mapping_file(0xab006000, sz, UC_PROT_WRITE | UC_PROT_READ, vf, 0)
 
         # Tracer
         self.tracer = Tracer(self.mu, self.modules)
@@ -112,34 +119,29 @@ class Emulator:
 
     # https://github.com/unicorn-engine/unicorn/blob/8c6cbe3f3cabed57b23b721c29f937dd5baafc90/tests/regress/arm_fp_vfp_disabled.py#L15
     def _enable_vfp(self):
-        # MRC p15, #0, r1, c1, c0, #2
-        # ORR r1, r1, #(0xf << 20)
-        # MCR p15, #0, r1, c1, c0, #2
-        # MOV r1, #0
-        # MCR p15, #0, r1, c7, c5, #4
-        # MOV r0,#0x40000000
-        # FMXR FPEXC, r0
-        code = '11EE501F'
-        code += '41F47001'
-        code += '01EE501F'
-        code += '4FF00001'
-        code += '07EE951F'
-        code += '4FF08040'
-        code += 'E8EE100A'
-        # vpush {d8}
-        code += '2ded028b'
+        code = '''
+            MRC p15, #0, r1, c1, c0, #2
+            ORR r1, r1, #(0xf << 20)
+            MCR p15, #0, r1, c1, c0, #2
+            MOV r1, #0
+            MCR p15, #0, r1, c7, c5, #4
+            MOV r0,#0x40000000
+            FMXR FPEXC, r0
+            vpush {d8}
+        '''
+        ks = Ks(KS_ARCH_ARM, KS_MODE_THUMB)
+        encoding, _ = ks.asm(code)
 
         address = 0x1000
         mem_size = 0x1000
-        code_bytes = bytes.fromhex(code)
 
         try:
             logger.info("Map [0x{:08X}, 0x{:08X}): 0x{:08X} | RW".format(address, address+mem_size, mem_size))
             self.mu.mem_map(address, mem_size)
-            self.mu.mem_write(address, code_bytes)
+            self.mu.mem_write(address, bytes(encoding))
             self.mu.reg_write(UC_ARM_REG_SP, address + mem_size)
 
-            self.mu.emu_start(address | 1, address + len(code_bytes))
+            self.mu.emu_start(address | 1, address + len(encoding))
         finally:
             self.mu.mem_unmap(address, mem_size)
 
@@ -201,8 +203,75 @@ class Emulator:
         self.mu.mem_write(thread_info_1 + 0xC, int(thread_info_2).to_bytes(4, byteorder='little'))
         self.mu.reg_write(UC_ARM_REG_C13_C0_3, thread_info_1)
 
-    def load_library(self, filename, do_init=True, emu64=True):
-        libmod = self.modules.load_module(filename, do_init, emu64)
+    def load_libc(self):
+        ld_android = '{}/system/{}/ld-android.so'.format(self.__vfs_root, 'lib64' if self.a64 else 'lib')
+        self.load_library(ld_android, True)
+        libdl = '{}/system/{}/libdl.so'.format(self.__vfs_root, 'lib64' if self.a64 else 'lib')
+        self.load_library(libdl, True)
+        libc = '{}/system/{}/libc.so'.format(self.__vfs_root, 'lib64' if self.a64 else 'lib')
+        self.load_library(libc, False)
+        linker = '{}/system/bin/{}'.format(self.__vfs_root, 'linker64' if self.a64 else 'linker')
+        mlinker=self.load_library(linker, False)
+
+        # Prepare KernelArgumentBlock, details see:
+        #  https://cs.android.com/android/platform/superproject/+/master:bionic/libc/private/KernelArgumentBlock.h
+        #  http://articles.manugarg.com/aboutelfauxiliaryvectors.html
+        #
+        #  position            content                     size (bytes)  comment
+        #    ------------------------------------------------------------------------
+        #  stack pointer ->  [ argc = number of args ]     8      
+        #                    [ argv[0] (pointer) ]         8      
+        #                    [ argv[1] (pointer) ]         8      
+        #                    [ argv[..] (pointer) ]        8 * n  
+        #                    [ argv[n - 1] (pointer) ]     8      
+        #                    [ argv[n] (pointer) ]         8           = NULL
+        #  
+        #                    [ envp[0] (pointer) ]         8     
+        #                    [ envp[1] (pointer) ]         8      
+        #                    [ envp[..] (pointer) ]        8      
+        #                    [ envp[term] (pointer) ]      8           = NULL
+        #  
+        #                    [ auxv[0] (Elf64_auxv_t) ]    16      
+        #                    [ auxv[1] (Elf64_auxv_t) ]    16
+        #                    [ auxv[..] (Elf64_auxv_t) ]   16 
+        #                    [ auxv[term] (Elf64_auxv_t) ] 16          = AT_NULL vector
+        #  
+        #                    [ padding ]                   0 - 32     
+        #  
+        #                    [ argument ASCIIZ strings ]   >= 0   
+        #                    [ environment ASCIIZ str. ]   >= 0   
+        #  
+        #  (0xbffffffc)      [ end marker ]                8          = NULL
+        #  
+        #  (0xc0000000)       < bottom of stack >          0          (virtual)
+        argc = 0x0
+        argv = (b'\0'*(8 if self.a64 else 4), )
+        envp = (b'\0'*(8 if self.a64 else 4), )
+        auxv = (struct.pack('<QQ' if self.a64 else '<LL', 7, mlinker.base), b'\0'*(16 if self.a64 else 8), )
+        padding = b'\0'*8
+        endmarker = b'\42'*(8 if self.a64 else 4)
+        # end marker
+        self.memory_manager.push(endmarker)
+        # padding
+        self.memory_manager.push(padding)
+        # auxv
+        for i in reversed(auxv):
+            self.memory_manager.push(i)
+        # env(null)
+        for i in reversed(envp):
+            self.memory_manager.push(i)
+        # argv(null)
+        for i in reversed(argv):
+            self.memory_manager.push(i)
+        # argc
+        self.memory_manager.push(argc.to_bytes(8 if self.a64 else 4, 'little'))
+
+        stop_pos = randint(HOOK_MEMORY_BASE, HOOK_MEMORY_BASE + HOOK_MEMORY_SIZE)
+        self.mu.emu_start(mlinker.entry_point, stop_pos - 1)
+
+
+    def load_library(self, filename, do_init=True):
+        libmod = self.modules.load_module(filename, do_init, self.a64)
         return libmod
 
     def call_symbol(self, module, symbol_name, *argv):
@@ -225,15 +294,15 @@ class Emulator:
 
         try:
             # Execute native call.
-            self.mu.reg_write(UC_ARM_REG_SP, STACK_ADDR + STACK_SIZE)
+            self.mu.reg_write(UC_ARM64_REG_SP if self.a64 else UC_ARM_REG_SP, STACK_ADDR + STACK_SIZE - 8)
             native_write_args(self, *argv)
             stop_pos = randint(HOOK_MEMORY_BASE, HOOK_MEMORY_BASE + HOOK_MEMORY_SIZE) | 1
-            self.mu.reg_write(UC_ARM_REG_LR, stop_pos)
+            self.mu.reg_write(UC_ARM64_REG_LR if self.a64 else UC_ARM_REG_LR, stop_pos)
             self.mu.emu_start(addr, stop_pos - 1)
 
             # Read result from locals if jni.
             if is_jni:
-                result_idx = self.mu.reg_read(UC_ARM_REG_R0)
+                result_idx = self.mu.reg_read(UC_ARM64_REG_X0 if self.a64 else UC_ARM_REG_R0)
                 result = self.java_vm.jni_env.get_local_reference(result_idx)
 
                 if result is None:
@@ -241,7 +310,7 @@ class Emulator:
 
                 return result.value
             else:
-                return self.mu.reg_read(UC_ARM_REG_R0)
+                return self.mu.reg_read(UC_ARM64_REG_X0 if self.a64 else UC_ARM_REG_R0)
         finally:
             # Clear locals if jni.
             if is_jni:

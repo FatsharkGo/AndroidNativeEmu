@@ -30,18 +30,18 @@ class ELFReader:
         if self._binary.has(lief.ELF.DYNAMIC_TAGS.INIT_ARRAY):
             secia = self._binary.get_section(".init_array")
             ia_vstart = secia.virtual_address
-            ia_entries = secia.size / 4
+            ia_entries = secia.size / (8 if self.is64() else 4)
             init_array = self._binary[lief.ELF.DYNAMIC_TAGS.INIT_ARRAY].array
             if ia_entries != len(init_array):
                 raise ValueError(".init_array entries mismatch")
             if 0 in init_array:
                 reia = [en for en in self.get_rels() if en.address 
                         in range(ia_vstart, ia_vstart+secia.size)
-                            and en.type==int(lief.ELF.RELOCATION_ARM.ABS32)]
+                            and en.type==int(lief.ELF.RELOCATION_AARCH64.RELATIVE if self.is64() else lief.ELF.RELOCATION_ARM.ABS32)]
                 for ent in reia:
-                    idx = int((ent.address - ia_vstart)/4)
+                    idx = int((ent.address - ia_vstart)/(8 if self.is64() else 4))
                     if init_array[idx] == 0:
-                        init_array[idx] = ent.symbol.value
+                        init_array[idx] = ent.addend if ent.is_rela else ent.symbol.value
 
             return [fptr+load_base for fptr in init_array if fptr != 0]
         else:
@@ -62,4 +62,6 @@ class ELFReader:
     def get_rels(self) -> list[lief.ELF.Relocation]:
         return list(self._binary.relocations)
 
+    def get_entry_point(self, load_base) -> int:
+        return self._binary.entrypoint + load_base
 

@@ -2,6 +2,9 @@ import logging
 import os
 
 from unicorn import Uc, UcError, UC_PROT_READ, UC_PROT_WRITE, UC_ERR_MAP
+from unicorn.arm_const import *
+from unicorn.arm64_const import *
+
 from ..utils.misc_utils import page_end, page_start
 
 from . import *
@@ -11,12 +14,34 @@ from .allocator_incremental import IncrementalAllocator
 logger = logging.getLogger(__name__)
 class MemoryManager:
 
-    def __init__(self, uc: Uc):
+    def __init__(self, uc: Uc, a64: bool):
+        self._a64 = a64
         self._uc = uc
+        self.__init_stack__()
         self._heap = HeapAllocator(HEAP_MIN, HEAP_MAX, uc)
         self._modules = IncrementalAllocator(MODULES_MIN, MODULES_MAX)
         self._mappings = IncrementalAllocator(MAPPING_MIN, MAPPING_MAX)
         self.__file_map_addr = {}
+
+    def __init_stack__(self):
+        logger.info("STACK! Map [0x{:08X}, 0x{:08X}): 0x{:08X} | RW".format(STACK_ADDR, STACK_ADDR+STACK_SIZE, STACK_SIZE))
+        self._uc.mem_map(STACK_ADDR, STACK_SIZE)
+        self._uc.reg_write(UC_ARM64_REG_SP if self._a64 else UC_ARM_REG_SP, STACK_ADDR + STACK_SIZE)
+
+    def push(self, value:bytes) -> int:
+        """Push argument into stack
+        value: The value of the argument in bytes
+        return: Address of sp
+        """
+        bp = self._uc.reg_read(UC_ARM64_REG_SP if self._a64 else UC_ARM_REG_SP)
+        try:
+            sp = bp - len(value)
+            self._uc.mem_write(sp, value)
+            self._uc.reg_write(UC_ARM64_REG_SP if self._a64 else UC_ARM_REG_SP, sp)
+            return sp
+        except Exception as e:
+            logger.error("Failed to push argument.")
+            return bp
 
     def allocate(self, size: int) -> int:
         """

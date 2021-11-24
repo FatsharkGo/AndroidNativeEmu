@@ -2,6 +2,7 @@ import inspect
 
 from unicorn import Uc
 from unicorn.arm_const import *
+from unicorn.arm64_const import *
 
 from ...hooker import STACK_OFFSET
 from ..java_class_def import JavaClassDef
@@ -15,52 +16,93 @@ def native_write_args(emu, *argv):
     if amount == 0:
         return
 
-    if amount >= 1:
-        native_write_arg_register(emu, UC_ARM_REG_R0, argv[0])
+    if emu.a64:
+        # Argument passing rules for aarch64, see:
+        #   https://developer.arm.com/documentation/ihi0055/d/
+        if amount >= 1:
+            native_write_arg_register(emu, UC_ARM64_REG_X0, argv[0])
+        if amount >= 2:
+            native_write_arg_register(emu, UC_ARM64_REG_X1, argv[1])
+        if amount >= 3:
+            native_write_arg_register(emu, UC_ARM64_REG_X2, argv[2])
+        if amount >= 4:
+            native_write_arg_register(emu, UC_ARM64_REG_X3, argv[3])
+        if amount >= 5:
+            native_write_arg_register(emu, UC_ARM64_REG_X4, argv[4])
+        if amount >= 6:
+            native_write_arg_register(emu, UC_ARM64_REG_X5, argv[5])
+        if amount >= 7:
+            native_write_arg_register(emu, UC_ARM64_REG_X6, argv[6])
+        if amount >= 8:
+            native_write_arg_register(emu, UC_ARM64_REG_X7, argv[7])
+        if amount >= 9:
+            sp_start = emu.mu.reg_read(UC_ARM64_REG_SP)
+            sp_current = sp_start - STACK_OFFSET
+            sp_current = sp_current - (8 * (amount - 8))
+            sp_end = sp_current
+            for arg in argv[8:]:
+                emu.mu.mem_write(sp_current, native_translate_arg(emu, arg).to_bytes(8, byteorder='little'))
+                sp_current = sp_current + 8
+            emu.mu.reg_write(UC_ARM64_REG_SP, sp_end)
+    else:
+        if amount >= 1:
+            native_write_arg_register(emu, UC_ARM_REG_R0, argv[0])
+        if amount >= 2:
+            native_write_arg_register(emu, UC_ARM_REG_R1, argv[1])    
+        if amount >= 3:
+            native_write_arg_register(emu, UC_ARM_REG_R2, argv[2])    
+        if amount >= 4:
+            native_write_arg_register(emu, UC_ARM_REG_R3, argv[3])    
+        if amount >= 5:
+            sp_start = emu.mu.reg_read(UC_ARM_REG_SP)
+            sp_current = sp_start - STACK_OFFSET  # Need to offset because our hook pushes one register on the stack.
+            sp_current = sp_current - (4 * (amount - 4))  # Reserve space for arguments.
+            sp_end = sp_current    
+            for arg in argv[4:]:
+                emu.mu.mem_write(sp_current, native_translate_arg(emu, arg).to_bytes(4, byteorder='little'))
+                sp_current = sp_current + 4    
+            emu.mu.reg_write(UC_ARM_REG_SP, sp_end)
 
-    if amount >= 2:
-        native_write_arg_register(emu, UC_ARM_REG_R1, argv[1])
 
-    if amount >= 3:
-        native_write_arg_register(emu, UC_ARM_REG_R2, argv[2])
-
-    if amount >= 4:
-        native_write_arg_register(emu, UC_ARM_REG_R3, argv[3])
-
-    if amount >= 5:
-        sp_start = emu.mu.reg_read(UC_ARM_REG_SP)
-        sp_current = sp_start - STACK_OFFSET  # Need to offset because our hook pushes one register on the stack.
-        sp_current = sp_current - (4 * (amount - 4))  # Reserve space for arguments.
-        sp_end = sp_current
-
-        for arg in argv[4:]:
-            emu.mu.mem_write(sp_current, native_translate_arg(emu, arg).to_bytes(4, byteorder='little'))
-            sp_current = sp_current + 4
-
-        emu.mu.reg_write(UC_ARM_REG_SP, sp_end)
-
-
-def native_read_args(mu, args_count):
+def native_read_args(mu, args_count, a64:bool):
     native_args = []
 
-    if args_count >= 1:
-        native_args.append(mu.reg_read(UC_ARM_REG_R0))
-
-    if args_count >= 2:
-        native_args.append(mu.reg_read(UC_ARM_REG_R1))
-
-    if args_count >= 3:
-        native_args.append(mu.reg_read(UC_ARM_REG_R2))
-
-    if args_count >= 4:
-        native_args.append(mu.reg_read(UC_ARM_REG_R3))
-
-    sp = mu.reg_read(UC_ARM_REG_SP)
-    sp = sp + STACK_OFFSET  # Need to offset by 4 because our hook pushes one register on the stack.
-
-    if args_count >= 5:
-        for x in range(0, args_count - 4):
-            native_args.append(int.from_bytes(mu.mem_read(sp + (x * 4), 4), byteorder='little'))
+    if a64:
+        if args_count >= 1:
+            native_args.append(mu.reg_read(UC_ARM64_REG_X0))
+        if args_count >= 2:
+            native_args.append(mu.reg_read(UC_ARM64_REG_X1))
+        if args_count >= 3:
+            native_args.append(mu.reg_read(UC_ARM64_REG_X2))
+        if args_count >= 4:
+            native_args.append(mu.reg_read(UC_ARM64_REG_X3))
+        if args_count >= 5:
+            native_args.append(mu.reg_read(UC_ARM64_REG_X4))
+        if args_count >= 6:
+            native_args.append(mu.reg_read(UC_ARM64_REG_X5))
+        if args_count >= 7:
+            native_args.append(mu.reg_read(UC_ARM64_REG_X6))
+        if args_count >= 8:
+            native_args.append(mu.reg_read(UC_ARM64_REG_X7))
+        sp = mu.reg_read(UC_ARM64_REG_SP)
+        sp = sp + STACK_OFFSET  # Need to offset by 4 because our hook pushes one register on the stack.    
+        if args_count >= 9:
+            for x in range(0, args_count - 8):
+                native_args.append(int.from_bytes(mu.mem_read(sp + (x * 8), 8), byteorder='little'))
+    else:
+        if args_count >= 1:
+            native_args.append(mu.reg_read(UC_ARM_REG_R0))    
+        if args_count >= 2:
+            native_args.append(mu.reg_read(UC_ARM_REG_R1))    
+        if args_count >= 3:
+            native_args.append(mu.reg_read(UC_ARM_REG_R2))    
+        if args_count >= 4:
+            native_args.append(mu.reg_read(UC_ARM_REG_R3))    
+        sp = mu.reg_read(UC_ARM_REG_SP)
+        sp = sp + STACK_OFFSET  # Need to offset by 4 because our hook pushes one register on the stack.    
+        if args_count >= 5:
+            for x in range(0, args_count - 4):
+                native_args.append(int.from_bytes(mu.mem_read(sp + (x * 4), 4), byteorder='little'))
 
     return native_args
 
@@ -104,7 +146,7 @@ def native_method(func):
         if args_count < 0:
             raise RuntimeError("NativeMethod accept at least (self, mu) or (mu).")
 
-        native_args = native_read_args(mu, args_count)
+        native_args = native_read_args(mu, args_count, emu.a64)
 
         if len(argv) == 1:
             result = func(mu, *native_args)

@@ -80,12 +80,17 @@ class VirtualFileSystem:
     """
     :type syscall_handler SyscallHandlers
     """
-    def __init__(self, root_path, syscall_handler, memory_map):
+    def __init__(self, root_path, syscall_handler, memory_map, a64:bool):
         self._root_path = root_path
         self.__memory_map = memory_map
         self.__pcb = pcb.get_pcb()
         self.__clear_proc_dir()
-        
+        if a64:
+            self.__setup_vfs64(syscall_handler)
+        else:
+            self.__setup_vfs32(syscall_handler)
+
+    def __setup_vfs32(self, syscall_handler):
         syscall_handler.set_handler(0x3, "read", 3, self._handle_read)
         syscall_handler.set_handler(0x4, "write", 3, self._handle_write)
         syscall_handler.set_handler(0x5, "open", 3, self._handle_open)
@@ -108,6 +113,28 @@ class VirtualFileSystem:
         syscall_handler.set_handler(0x14c, "readlinkat", 4, self.__readlinkat)
         syscall_handler.set_handler(0x14e, "faccessat", 4, self._faccessat)
 
+    def __setup_vfs64(self, syscall_handler):
+        syscall_handler.set_handler(0x3F, "read", 3, self._handle_read)
+        syscall_handler.set_handler(0x40, "write", 3, self._handle_write)
+        #syscall_handler.set_handler(0x5, "open", 3, self._handle_open)
+        syscall_handler.set_handler(0x39, "close", 1, self._handle_close)
+        #syscall_handler.set_handler(0x0A, "unlink", 1, self._handle_unlink)
+        syscall_handler.set_handler(0x3E, "lseek", 3, self._handle_lseek)
+        #syscall_handler.set_handler(0x21, "access", 2, self._handle_access)
+        #syscall_handler.set_handler(0x27, "mkdir", 2, self.__mkdir)
+        syscall_handler.set_handler(0x1D, "ioctl", 6, self.__ioctl)
+        syscall_handler.set_handler(0x19, "fcntl", 6, self.__fcntl64)
+        syscall_handler.set_handler(0x42, "writev", 3, self._handle_writev)
+        #syscall_handler.set_handler(0xC3, "stat64", 2, self._handle_stat64)
+        #syscall_handler.set_handler(0xC4, "lstat64", 2, self._handle_lstat64)
+        #syscall_handler.set_handler(0xC5, "fstat64", 2, self._handle_fstat64)
+        syscall_handler.set_handler(0x3D, "getdents64", 3, self._handle_getdents64)
+        #syscall_handler.set_handler(0xDD, "fcntl64", 6, self.__fcntl64)
+        #syscall_handler.set_handler(0x10A, "statfs64", 3, self.__statfs64)
+        syscall_handler.set_handler(0x38, "openat", 4, self._handle_openat)
+        #syscall_handler.set_handler(0x147, "fstatat64", 4, self._handle_fstatat64)
+        syscall_handler.set_handler(0x4E, "readlinkat", 4, self.__readlinkat)
+        syscall_handler.set_handler(0x30, "faccessat", 4, self._faccessat)
 
     def __create_fd_link(self, fd, target):
         global g_isWin

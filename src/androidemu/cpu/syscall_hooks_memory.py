@@ -5,15 +5,34 @@ from ..memory.memory_manager import MemoryManager
 
 class SyscallHooksMemory:
 
-    def __init__(self, uc: Uc, memory: MemoryManager, syscall_handler: SyscallHandlers):
+    def __init__(self, uc: Uc, memory: MemoryManager, syscall_handler: SyscallHandlers, a64: bool):
         self._uc = uc
         self._memory = memory
         self._syscall_handler = syscall_handler
+        if a64:
+            self._mm64()
+        else:
+            self._mm32()
+
+    def _mm32(self):
+        """
+        Setup memory management hooks for arm
+        """
         self._syscall_handler.set_handler(0x2d, "brk", 1, self._handle_brk)
         self._syscall_handler.set_handler(0x5B, "munmap", 2, self._handle_munmap)
         self._syscall_handler.set_handler(0x7D, "mprotect", 3, self._handle_mprotect)
         self._syscall_handler.set_handler(0xC0, "mmap2", 6, self._handle_mmap2)
         self._syscall_handler.set_handler(0xDC, "madvise", 3, self._handle_madvise)
+
+    def _mm64(self):
+        """
+        Setup memory management hooks for aarch64
+        """
+        self._syscall_handler.set_handler(0xD6, "brk", 1, self._handle_brk)
+        self._syscall_handler.set_handler(0xD7, "munmap", 2, self._handle_munmap)
+        self._syscall_handler.set_handler(0xE2, "mprotect", 3, self._handle_mprotect)
+        self._syscall_handler.set_handler(0xDE, "mmap2", 6, self._handle_mmap2)
+        self._syscall_handler.set_handler(0xE9, "madvise", 3, self._handle_madvise)
 
     def _handle_brk(self, uc, brk):
         #TODO: set errno

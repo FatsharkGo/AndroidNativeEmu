@@ -25,12 +25,13 @@ class Modules:
     :type emu androidemu.emulator.Emulator
     :type modules list[Module]
     """
-    def __init__(self, emu, vfs_root):
+    def __init__(self, emu, vfs_root, a64:bool):
         self.emu = emu
         self.__search_path = set()
         self.modules = list()
         self.symbol_hooks = dict()
         self.__vfs_root = vfs_root
+        self.__a64 = a64
 
     def add_symbol_hook(self, symbol_name, addr):
         self.symbol_hooks[symbol_name] = addr
@@ -58,10 +59,10 @@ class Modules:
                 return m
 
     def load_module(self, filename:str, do_init:bool=True, emu64=True):
-        logger.debug("Loading module '%s'" % filename)
         m = self.find_module_by_name(filename)
         if m is not None:
             return m
+        logger.debug("Loading module '%s'" % filename)
 
         self.__search_path.add(os.path.dirname(os.path.abspath(filename)))
         reader = elf_reader.ELFReader(filename)
@@ -80,11 +81,11 @@ class Modules:
                 continue
             # Determine the address bound
             bound_low = min(bound_low, segment.virtual_address)
-            bound_high = max(bound_high, segment.virtual_address + segment.virtual_size)            
-        
+            bound_high = max(bound_high, segment.virtual_address + segment.virtual_size)
+
         # Retrieve a base address for this module.        
         (load_base, _) = self.emu.memory_manager.reserve_module(bound_high - bound_low)        
-        logger.debug('=> Base address: 0x%x' % load_base)
+        logger.debug('   Base address: 0x{:08X}'.format(load_base))
 
         for segment in load_segments:
             prot = get_segment_protection(int(segment.flags))
@@ -92,12 +93,14 @@ class Modules:
             
             (seg_addr, seg_size) = align(load_base + segment.virtual_address, segment.virtual_size, True)
 
-            logger.info("Map [0x{:08X}, 0x{:08X}): 0x{:08X} | RWX".format(seg_addr, seg_addr+seg_size, seg_size))
+            logger.info("   Map [0x{:08X}, 0x{:08X}): 0x{:08X} | RWX".format(seg_addr, seg_addr+seg_size, seg_size))
             self.emu.mu.mem_map(seg_addr, seg_size, prot)
             self.emu.mu.mem_write(load_base + segment.virtual_address, bytes(segment.content))
 
         # Load needed
         so_needed = reader.get_so_need()
+        if len(so_needed) > 0:
+            logger.info("   Deps: {}".format(' '.join(so_needed)))
         for so_name in so_needed:
             fpn_needed = None
             path = misc_utils.vfs_path_to_system_path(self.__vfs_root, so_name, reader.is64())
@@ -140,7 +143,7 @@ class Modules:
                     if rel.symbol.type == lief.ELF.SYMBOL_TYPES.FUNC:
                         value = value | 1
                     # Write the new value
-                    self.emu.mu.mem_write(rel_addr, value.to_bytes(4, byteorder='little'))
+                    self.emu.mu.mem_write(rel_addr, value.to_bytes(8 if self.__a64 else 4, byteorder='little'))
             elif rel_info_type in (arm.R_ARM_GLOB_DAT, arm.R_ARM_JUMP_SLOT, 
                                             arm.R_AARCH64_GLOB_DAT, arm.R_AARCH64_JUMP_SLOT):
                 # Resolve the symbol
@@ -148,30 +151,43 @@ class Modules:
                     value = symbols_resolved[rel.symbol.name].address
                 # Write the new value
                 self.emu.mu.mem_write(rel_addr, value.to_bytes(4, byteorder='little'))
-            elif rel_info_type in (arm.R_ARM_RELATIVE, arm.R_AARCH64_RELATIVE):
+            elif rel_info_type in (arm.R_ARM_RELATIVE,):
                 if rel.symbol.value == 0:
                     # Load addres at which it was linked originally
-                    value_orig_bytes = self.emu.mu.mem_read(rel_addr, 4)
+                    value_orig_bytes = self.emu.mu.mem_read(rel_addr, 8 if self.__a64 else 4)
                     value_orig = int.from_bytes(value_orig_bytes, byteorder='little')
                     # Create the new value
                     value = load_base + value_orig
                     # Write the new value
-                    self.emu.mu.mem_write(rel_addr, value.to_bytes(4, byteorder='little'))
+                    self.emu.mu.mem_write(rel_addr, value.to_bytes(8 if self.__a64 else 4, byteorder='little'))
                 else:
                     raise NotImplementedError("Relocation type not support")
+            elif rel_info_type in (arm.R_AARCH64_RELATIVE,):
+                if rel.symbol.value == 0:
+                    # Create the new value
+                    value = load_base + rel.addend
+                    # Write the new value
+                    self.emu.mu.mem_write(rel_addr, value.to_bytes(8, byteorder='little'))
+                else:
+                    raise NotImplementedError("Relocation type not support")
+            elif rel_info_type in (arm.R_AARCH64_ABS64,):
+                value = load_base + rel.symbol.value
+                self.emu.mu.mem_write(rel_addr, value.to_bytes(8, byteorder='little'))
+            else:
+                raise NotImplementedError("Relocation type({}) not support.".format(rel_info_type))
 
         # Prepare the init array
         init_array = reader.get_init_array(load_base)
 
         # store information about loaded module
-        module = Module(filename, load_base, bound_high-bound_low, symbols_resolved, init_array)
+        module = Module(filename, load_base, bound_high-bound_low, symbols_resolved, init_array, reader.get_entry_point(load_base))
         self.modules.append(module)
 
         # Do the init
         if do_init:
             module.call_init(self.emu)
 
-        logger.info("Finish load lib %s base 0x%08X"%(filename, load_base))
+        logger.info("Finish load lib %s -> 0x%08X"%(filename, load_base))
         return module
 
     def _elf_get_symval(self, elf_base: int, symbol: lief.ELF.Symbol):
@@ -187,7 +203,8 @@ class Modules:
                     # Weak symbol initialized as 0
                     return 0
                 else:
-                    logger.error('=> Undefined external symbol: %s' % symbol.name)
+                    if symbol.name != '':
+                        logger.error('   ! Undefined external symbol: %s' % symbol.name)
                     return None
             else:
                 return target
