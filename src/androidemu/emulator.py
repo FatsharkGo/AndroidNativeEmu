@@ -270,8 +270,8 @@ class Emulator:
         self.mu.emu_start(mlinker.entry_point, stop_pos - 1)
 
 
-    def load_library(self, filename, do_init=True):
-        libmod = self.modules.load_module(filename, do_init, self.a64)
+    def load_library(self, filename, do_init=True, load_needed=True):
+        libmod = self.modules.load_module(filename, do_init, load_needed, self.a64)
         return libmod
 
     def call_symbol(self, module, symbol_name, *argv):

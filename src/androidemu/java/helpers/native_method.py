@@ -1,3 +1,4 @@
+import struct
 import inspect
 
 from unicorn import Uc
@@ -19,31 +20,35 @@ def native_write_args(emu, *argv):
     if emu.a64:
         # Argument passing rules for aarch64, see:
         #   https://developer.arm.com/documentation/ihi0055/d/
-        if amount >= 1:
-            native_write_arg_register(emu, UC_ARM64_REG_X0, argv[0])
-        if amount >= 2:
-            native_write_arg_register(emu, UC_ARM64_REG_X1, argv[1])
-        if amount >= 3:
-            native_write_arg_register(emu, UC_ARM64_REG_X2, argv[2])
-        if amount >= 4:
-            native_write_arg_register(emu, UC_ARM64_REG_X3, argv[3])
-        if amount >= 5:
-            native_write_arg_register(emu, UC_ARM64_REG_X4, argv[4])
-        if amount >= 6:
-            native_write_arg_register(emu, UC_ARM64_REG_X5, argv[5])
-        if amount >= 7:
-            native_write_arg_register(emu, UC_ARM64_REG_X6, argv[6])
-        if amount >= 8:
-            native_write_arg_register(emu, UC_ARM64_REG_X7, argv[7])
-        if amount >= 9:
-            sp_start = emu.mu.reg_read(UC_ARM64_REG_SP)
-            sp_current = sp_start - STACK_OFFSET
-            sp_current = sp_current - (8 * (amount - 8))
-            sp_end = sp_current
-            for arg in argv[8:]:
-                emu.mu.mem_write(sp_current, native_translate_arg(emu, arg).to_bytes(8, byteorder='little'))
-                sp_current = sp_current + 8
-            emu.mu.reg_write(UC_ARM64_REG_SP, sp_end)
+        rx=[UC_ARM64_REG_X0, UC_ARM64_REG_X1, UC_ARM64_REG_X2, UC_ARM64_REG_X3,
+            UC_ARM64_REG_X4, UC_ARM64_REG_X5, UC_ARM64_REG_X6, UC_ARM64_REG_X7]
+        rv=[UC_ARM64_REG_V0, UC_ARM64_REG_V1, UC_ARM64_REG_V2, UC_ARM64_REG_V3,
+            UC_ARM64_REG_V4, UC_ARM64_REG_V5, UC_ARM64_REG_V6, UC_ARM64_REG_V7]
+        for arg in argv:
+            if type(arg) is float:
+                if len(rv) > 0:
+                    native_write_arg_register(emu, rv.pop(0), arg)
+                else:
+                    sp_start = emu.mu.reg_read(UC_ARM64_REG_SP)
+                    sp_current = sp_start - STACK_OFFSET
+                    sp_current = sp_current - (8 * (amount - 8))
+                    sp_end = sp_current
+                    for arg in argv[8:]:
+                        emu.mu.mem_write(sp_current, native_translate_arg(emu, arg).to_bytes(8, byteorder='little'))
+                        sp_current = sp_current + 8
+                    emu.mu.reg_write(UC_ARM64_REG_SP, sp_end)
+            else:
+                if len(rx) > 0:
+                    native_write_arg_register(emu, rx.pop(0), arg)
+                else:
+                    sp_start = emu.mu.reg_read(UC_ARM64_REG_SP)
+                    sp_current = sp_start - STACK_OFFSET
+                    sp_current = sp_current - (8 * (amount - 8))
+                    sp_end = sp_current
+                    for arg in argv[8:]:
+                        emu.mu.mem_write(sp_current, native_translate_arg(emu, arg).to_bytes(8, byteorder='little'))
+                        sp_current = sp_current + 8
+                    emu.mu.reg_write(UC_ARM64_REG_SP, sp_end)
     else:
         if amount >= 1:
             native_write_arg_register(emu, UC_ARM_REG_R0, argv[0])
@@ -110,6 +115,8 @@ def native_read_args(mu, args_count, a64:bool):
 def native_translate_arg(emu, val):
     if isinstance(val, int):
         return val
+    elif isinstance(val, float):
+        return int.from_bytes(struct.pack('<d', val), 'little')
     elif isinstance(val, str):
         return emu.java_vm.jni_env.add_local_reference(jstring(val))
     elif isinstance(val, list):

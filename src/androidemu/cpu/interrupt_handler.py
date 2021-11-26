@@ -31,9 +31,7 @@ class InterruptHandler:
             self._handlers[intno](uc, intno, data)
         else:
             logger.error("Unhandled interrupt %d at %x, stopping emulation" % (intno, self._mu.reg_read(UC_ARM64_REG_PC)))
-            if intno not in [1]:
-                self._mu.emu_stop()
-                sys.exit(-1)
+            self._mu.emu_stop()
 
     def set_handler(self, intno, handler):
         self._handlers[intno] = handler

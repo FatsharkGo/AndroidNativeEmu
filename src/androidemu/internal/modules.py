@@ -58,7 +58,7 @@ class Modules:
             if (absp1 == absm):
                 return m
 
-    def load_module(self, filename:str, do_init:bool=True, emu64=True):
+    def load_module(self, filename:str, do_init:bool, load_needed:bool, emu64:bool):
         m = self.find_module_by_name(filename)
         if m is not None:
             return m
@@ -101,21 +101,24 @@ class Modules:
         so_needed = reader.get_so_need()
         if len(so_needed) > 0:
             logger.info("   Deps: {}".format(' '.join(so_needed)))
-        for so_name in so_needed:
-            fpn_needed = None
-            path = misc_utils.vfs_path_to_system_path(self.__vfs_root, so_name, reader.is64())
-            if (not os.path.exists(path)):
-                for sp in self.__search_path:
-                    if os.path.exists(os.path.join(sp, so_name)):
-                        fpn_needed = os.path.join(sp, so_name)
-                        break
-            else:
-                fpn_needed = path
-            if fpn_needed is None:
-                logger.warn("%s needed by %s do not exist in vfs %s"%(so_name, filename, self.__vfs_root))
-                continue
-            else:
-                libmod = self.load_module(fpn_needed, do_init, emu64)
+        if not load_needed:
+            logger.warn("   Load needed disabled")
+        else:
+            for so_name in so_needed:
+                fpn_needed = None
+                path = misc_utils.vfs_path_to_system_path(self.__vfs_root, so_name, reader.is64())
+                if (not os.path.exists(path)):
+                    for sp in self.__search_path:
+                        if os.path.exists(os.path.join(sp, so_name)):
+                            fpn_needed = os.path.join(sp, so_name)
+                            break
+                else:
+                    fpn_needed = path
+                if fpn_needed is None:
+                    logger.warn("%s needed by %s do not exist in vfs %s"%(so_name, filename, self.__vfs_root))
+                    continue
+                else:
+                    libmod = self.load_module(fpn_needed, do_init, load_needed, emu64)
 
         # Resolve all symbols
         symbols = reader.get_symbols()
